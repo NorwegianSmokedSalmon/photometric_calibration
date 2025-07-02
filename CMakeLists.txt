@@ -79,8 +79,12 @@ target_link_libraries(online_pcalib
 
 # demo executable for online calibration
 add_executable(online_pcalib_demo src/main.cpp)
-target_link_libraries(online_pcalib_demo
-  online_pcalib)
+target_link_libraries(online_pcalib_demo online_pcalib)
+
+# demo 测试
+add_executable(test src/test.cpp)
+target_link_libraries(test online_pcalib)
+
 
 # install rules
 install (TARGETS online_pcalib online_pcalib_demo

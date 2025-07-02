@@ -41,6 +41,7 @@ public:
      * @return Read input image
      */
     cv::Mat readImage(int image_index);
+    cv::Mat readImageRGB(int image_index);
 
     int getNumImages() { return (int)m_files.size(); }
 

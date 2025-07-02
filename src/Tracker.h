@@ -61,14 +61,22 @@ public:
      * @param database Handle to the information database
      */
     Tracker(int patch_size,int nr_active_features,int nr_pyramid_levels,Database* database);
-    
+    void computeGradientImage(cv::Mat input_image,cv::Mat &gradient_image);
     /**
      * Track features from old frame to the new input frame
      * Extract new features if necessary
      * Filter out spurious tracks
      */
      // Todo: change param to reference
+    Database* getDatabase() { return m_database; }
+    void initialFeatureExtraction(cv::Mat input_image,cv::Mat gradient_image,double gt_exp_time); 
     void trackNewFrame(cv::Mat frame,double gt_exp_time);
+    //Jack add RGB接口
+    void computeGradientImageRGB(const cv::Mat& input_image, cv::Mat& gradient_image);
+    void initialFeatureExtractionRGB(const cv::Mat& input_image, const cv::Mat& gradient_image, double gt_exp_time);
+    std::vector<double> bilinearInterpolateImagePatchRGB(const cv::Mat& image, double x, double y);
+    cv::Vec3d bilinearInterpolateImageRGB(const cv::Mat& image, double x, double y);
+
     
 private:
     
@@ -120,18 +128,21 @@ private:
      * Extract features for the first time
      */
     // Todo: change param to reference
-    void initialFeatureExtraction(cv::Mat input_image,cv::Mat gradient_image,double gt_exp_time);
+    // void initialFeatureExtraction(cv::Mat input_image,cv::Mat gradient_image,double gt_exp_time);
     
     /**
      * Compute gradient image
      */
     // Todo: change param to reference
-    void computeGradientImage(cv::Mat input_image,cv::Mat &gradient_image);
+    
     
     /**
      * Photometrically correct image based on vignette + response estimate
      */
     void photometricallyCorrectImage(cv::Mat &corrected_image);
+
+
+
 };
 
 #endif // include guard

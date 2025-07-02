@@ -350,6 +350,140 @@ int run_online_calibration(Settings *run_settings,std::vector<double> gt_exp_tim
     return 0;
 }
 
+//Jack add, calibration for RGB
+int run_online_calibrationRGB(Settings *run_settings,std::vector<double> gt_exp_times)
+{
+    double vis_exponent = 1.0;
+
+    int safe_zone_size = run_settings->nr_images_rapid_exp + 5;
+
+    //  Set up the object to read new images from
+    ImageReader image_reader(run_settings->image_folder, cv::Size(run_settings->image_width, run_settings->image_height));
+
+    // Set up the information database
+    Database database(run_settings->image_width,run_settings->image_height);
+
+    // Setup the rapid  exposure time estimator
+    RapidExposureTimeEstimator exposure_estimator(run_settings->nr_images_rapid_exp, &database);
+
+    // Setup the nonlinear optimizer
+    NonlinearOptimizer backend_optimizer(run_settings->keyframe_spacing,
+                                         &database,
+                                         safe_zone_size,
+                                         run_settings->min_keyframes_valid,
+                                         run_settings->tracker_patch_size);
+
+    // Set up the object that handles the tracking and receives new images, extracts features
+    Tracker tracker(run_settings->tracker_patch_size,run_settings->nr_active_features,run_settings->nr_pyramid_levels,&database);
+    
+    int optimize_cnt = 0;
+    int num_images = image_reader.getNumImages();
+    
+    // Run over all input images, track the new image, estimate exposure time and optimize other parameters in the background
+    for(int i = run_settings->start_image_index; i < num_images && (run_settings->end_image_index < 0 || i < run_settings->end_image_index); i++)
+    {
+        std::cout << "image: " << i << std::endl;
+
+        // Read GT exposure time if available for this frame
+        // Todo: Check if index is out of bounds, if gt exp file has not enough lines
+        double gt_exp_time = -1.0;
+        if(gt_exp_times.size() > 0)
+        {
+            gt_exp_time = gt_exp_times.at(i);
+        }
+        
+        // If enough images are in the database, remove once all initial images for which no exposure time could be optimized
+        // Since those frames will not be that good for backend optimization
+        if(i == run_settings->nr_images_rapid_exp*2 + safe_zone_size)
+        {
+            for(int ii = 0;ii < run_settings->nr_images_rapid_exp;ii++)
+            {
+                database.removeLastFrame();
+            }
+        }
+        
+        // If the database is large enough, start removing old frames
+        if(i > run_settings->nr_active_frames)
+            database.removeLastFrame();
+        
+        // Read next input image
+        cv::Mat new_image = image_reader.readImageRGB(i);
+        
+        // Track input image (+ time the result)
+        //追踪新图像，需要改称RGB三通道
+        tracker.trackNewFrame(new_image,gt_exp_time);
+      
+        // Rapid exposure time estimation (+ time the result)
+        double exposure_time = exposure_estimator.estimateExposureTime();
+        database.m_tracked_frames.at(database.m_tracked_frames.size()-1).m_exp_time = exposure_time;
+        database.visualizeRapidExposureTimeEstimates(vis_exponent);
+
+        // Remove the exposure time from the radiance estimates
+        std::vector<Feature*>* features = &database.m_tracked_frames.at(database.m_tracked_frames.size()-1).m_features;
+        for(int k = 0;k < features->size();k++)
+        {
+            for(int r = 0;r < features->at(k)->m_radiance_estimates.size();r++)
+            {
+                features->at(k)->m_radiance_estimates.at(r) /= exposure_time;
+            }
+        }
+  
+        // Visualize tracking
+        if(i%run_settings->visualize_cnt == 0)
+            database.visualizeTracking();
+        
+        pthread_mutex_lock(&g_is_optimizing_mutex);
+        bool is_optimizing = g_is_optimizing;
+        pthread_mutex_unlock(&g_is_optimizing_mutex);
+        
+        // Optimization is still running, don't do anything and keep tracking
+        if(is_optimizing)
+        {
+            continue;
+        }
+        
+        //optimization is currently not running
+        // (1) Fetch the current optimization result and update database
+        // (2) Try to extract a new optimization block and restart optimization in the background
+        
+        // Fetch the old optimization result from the optimizer, if available
+        if(optimize_cnt > 0)
+        {
+            // Write the result to the database, visualize the result
+            database.m_vignette_estimate.setVignetteParameters(backend_optimizer.m_vignette_estimate);
+            database.m_response_estimate.setGrossbergParameterVector(backend_optimizer.m_response_estimate);
+            database.m_response_estimate.setInverseResponseVector(backend_optimizer.m_raw_inverse_response);
+            
+            vis_exponent = backend_optimizer.visualizeOptimizationResult(backend_optimizer.m_raw_inverse_response);
+        }
+        
+        // Try to fetch a new optimization block
+        bool succeeded = backend_optimizer.extractOptimizationBlock();
+        
+        if(succeeded)
+        {
+            // TODO: reuse thread
+            //start a new optimization task here
+            pthread_create(&opt_thread, NULL, run_optimization_task, (void*)&backend_optimizer);
+            optimize_cnt++;
+        }
+    }
+
+    pthread_join(opt_thread,NULL);
+
+    if(optimize_cnt > 0)
+    {
+        // Write the result to the database, visualize the result
+        database.m_vignette_estimate.setVignetteParameters(backend_optimizer.m_vignette_estimate);
+        database.m_response_estimate.setGrossbergParameterVector(backend_optimizer.m_response_estimate);
+        database.m_response_estimate.setInverseResponseVector(backend_optimizer.m_raw_inverse_response);
+
+        vis_exponent = backend_optimizer.visualizeOptimizationResult(backend_optimizer.m_raw_inverse_response);
+    }
+    
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     CLI::App app("Photometric Calibration");
@@ -427,6 +561,7 @@ int main(int argc, char** argv)
 
     // Run program either in multithreaded online mode 
     // or in linearized batch mode
+    // 运行主函数
     if(run_settings.calibration_mode == "online")
     {
         std::cout << "Run online calibration mode." << std::endl;

@@ -23,8 +23,8 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
 {
     // Compute gradient (necessary for weighting factors)
     // Todo: move to class member
-    cv::Mat gradient_image;
-    computeGradientImage(input_image, gradient_image);
+    cv::Mat gradient_image; //梯度图像，用于特征点提取
+    computeGradientImageRGB(input_image, gradient_image);
     
     // Correct the input image based on the current response and vignette estimate (exposure time not known yet)
     // Todo: move to class member
@@ -34,7 +34,7 @@ void Tracker::trackNewFrame(cv::Mat input_image,double gt_exp_time)
     // Empty database -> First frame - extract features and push them back
     if(m_database->m_tracked_frames.size() == 0)
     {
-        initialFeatureExtraction(input_image,gradient_image,gt_exp_time);
+        initialFeatureExtractionRGB(input_image,gradient_image,gt_exp_time);
         return;
     }
     
@@ -422,6 +422,9 @@ void Tracker::computeGradientImage(cv::Mat input_image,cv::Mat &gradient_image)
     cv::addWeighted( grad_x, 0.5, grad_y, 0.5, 0, gradient_image );
 }
 
+
+
+
 void Tracker::photometricallyCorrectImage(cv::Mat &corrected_frame)
 {
     for(int r = 0;r < corrected_frame.rows;r++)
@@ -445,5 +448,144 @@ void Tracker::photometricallyCorrectImage(cv::Mat &corrected_frame)
      * cv::waitKey(0);
      *
      */
+}
+
+//RGB双线性插值
+std::vector<double> Tracker::bilinearInterpolateImagePatchRGB(const cv::Mat& image, double x, double y)
+{
+    std::vector<double> result;
+
+    int channels = image.channels();
+    for (int dx = -m_patch_size; dx <= m_patch_size; dx++)
+    {
+        for (int dy = -m_patch_size; dy <= m_patch_size; dy++)
+        {
+            double px = x + dx;
+            double py = y + dy;
+
+            if (channels == 1)
+            {
+                double val = bilinearInterpolateImage(image, px, py);
+                result.push_back(val);
+            }
+            else if (channels == 3)
+            {
+                cv::Vec3d val = bilinearInterpolateImageRGB(image, px, py);
+                result.push_back(val[0]);
+                result.push_back(val[1]);
+                result.push_back(val[2]);
+            }
+        }
+    }
+
+    return result;
+}
+
+//RGB梯度计算
+void Tracker::computeGradientImageRGB(const cv::Mat& input_image, cv::Mat& gradient_image)
+{
+    CV_Assert(input_image.channels() == 3); // 确保输入是RGB图像
+
+    // 高斯模糊
+    cv::Mat blurred_image;
+    cv::GaussianBlur(input_image, blurred_image, cv::Size(3, 3), 0, 0, cv::BORDER_DEFAULT);
+
+    // 拆分通道
+    std::vector<cv::Mat> channels(3);
+    cv::split(blurred_image, channels);
+
+    std::vector<cv::Mat> gradient_channels(3);
+    for (int i = 0; i < 3; ++i)
+    {
+        cv::Mat grad_x, grad_y, grad;
+
+        cv::Sobel(channels[i], grad_x, CV_16S, 1, 0, 3);
+        cv::Sobel(channels[i], grad_y, CV_16S, 0, 1, 3);
+
+        cv::convertScaleAbs(grad_x, grad_x);
+        cv::convertScaleAbs(grad_y, grad_y);
+        cv::addWeighted(grad_x, 0.5, grad_y, 0.5, 0, grad);
+
+        gradient_channels[i] = grad;
+    }
+
+    // 合并三个通道为RGB梯度图
+    cv::merge(gradient_channels, gradient_image);
+}
+
+//使用RGB梯度图提取特征
+void Tracker::initialFeatureExtractionRGB(const cv::Mat& input_image, const cv::Mat& gradient_image, double gt_exp_time)
+{
+    std::vector<cv::Point2f> old_f;
+    std::vector<cv::Point2f> feature_locations = extractFeatures(input_image, old_f);
+    std::vector<int> validity_vector = checkLocationValidity(feature_locations);
+
+    Frame frame;
+    frame.m_image = input_image;
+    frame.m_image_corrected = input_image.clone();
+    frame.m_exp_time = 1.0;
+    frame.m_gt_exp_time = gt_exp_time;
+
+    for (int p = 0; p < feature_locations.size(); p++)
+    {
+        if (validity_vector.at(p) == 0)
+            continue;
+
+        Feature* f = new Feature();
+        f->m_xy_location = feature_locations.at(p);
+        f->m_next_feature = NULL;
+        f->m_prev_feature = NULL;
+
+        std::vector<double> os = bilinearInterpolateImagePatch(input_image, feature_locations.at(p).x, feature_locations.at(p).y);
+        std::vector<double> gs = bilinearInterpolateImagePatch(gradient_image, feature_locations.at(p).x, feature_locations.at(p).y);
+
+        f->m_output_values = os;
+        f->m_radiance_estimates = os;
+        f->m_gradient_values = gs;
+
+        frame.m_features.push_back(f);
+    }
+
+    m_database->m_tracked_frames.push_back(frame);
+}
+
+//RGB三通道图像的插值函数
+cv::Vec3d Tracker::bilinearInterpolateImageRGB(const cv::Mat& image, double x, double y)
+{
+    int floor_x = static_cast<int>(std::floor(x));
+    int ceil_x  = static_cast<int>(std::ceil(x));
+    int floor_y = static_cast<int>(std::floor(y));
+    int ceil_y  = static_cast<int>(std::ceil(y));
+
+    // 边界检查
+    if (floor_x < 0 || ceil_x >= image.cols || floor_y < 0 || ceil_y >= image.rows)
+        return cv::Vec3d(0, 0, 0);
+
+    double x_normalized = x - floor_x;
+    double y_normalized = y - floor_y;
+
+    // 双线性插值权重
+    double w1 = (1 - x_normalized) * (1 - y_normalized);
+    double w2 = x_normalized * (1 - y_normalized);
+    double w3 = (1 - x_normalized) * y_normalized;
+    double w4 = x_normalized * y_normalized;
+
+    // 获取4个像素点的RGB值
+    cv::Vec3b i1 = image.at<cv::Vec3b>(floor_y, floor_x);
+    cv::Vec3b i2 = image.at<cv::Vec3b>(floor_y, ceil_x);
+    cv::Vec3b i3 = image.at<cv::Vec3b>(ceil_y, floor_x);
+    cv::Vec3b i4 = image.at<cv::Vec3b>(ceil_y, ceil_x);
+
+    // 三通道分别插值
+    cv::Vec3d result;
+    for (int c = 0; c < 3; ++c)
+    {
+        result[c] = w1 * static_cast<double>(i1[c]) +
+                    w2 * static_cast<double>(i2[c]) +
+                    w3 * static_cast<double>(i3[c]) +
+                    w4 * static_cast<double>(i4[c]);
+    }
+
+    return result;
 }
 

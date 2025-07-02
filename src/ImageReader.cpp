@@ -37,6 +37,24 @@ cv::Mat ImageReader::readImage(int image_index)
     return image;
 }
 
+cv::Mat ImageReader::readImageRGB(int image_index)
+{
+    // Read image from disk
+    //RGB三通道
+    cv::Mat image = cv::imread(m_files.at(image_index), cv::IMREAD_COLOR); 
+        
+    if(!image.data)
+    {
+        std::cout << "ERROR READING IMAGE " << m_files.at(image_index) << std::endl;
+        return cv::Mat();
+    }
+    
+    // Resize input image
+    cv::resize(image, image, m_img_new_size);
+    
+    return image;
+}
+
 int ImageReader::getDir(std::string dir, std::vector<std::string> &files)
 {
     DIR *dp;
