@@ -76,6 +76,7 @@ public:
     void initialFeatureExtractionRGB(const cv::Mat& input_image, const cv::Mat& gradient_image, double gt_exp_time);
     std::vector<double> bilinearInterpolateImagePatchRGB(const cv::Mat& image, double x, double y);
     cv::Vec3d bilinearInterpolateImageRGB(const cv::Mat& image, double x, double y);
+    void photometricallyCorrectImage(cv::Mat &corrected_frame);
 
     
 private:

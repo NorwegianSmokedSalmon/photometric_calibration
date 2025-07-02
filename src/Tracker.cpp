@@ -450,6 +450,11 @@ void Tracker::photometricallyCorrectImage(cv::Mat &corrected_frame)
      */
 }
 
+//todo, RGB图像校准
+void Tracker::photometricallyCorrectImageRGB(cv::Mat &corrected_frame){
+
+}
+
 //RGB双线性插值
 std::vector<double> Tracker::bilinearInterpolateImagePatchRGB(const cv::Mat& image, double x, double y)
 {

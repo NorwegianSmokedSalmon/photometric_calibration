@@ -40,6 +40,24 @@ public:
         m_grossberg_parameters.push_back(0.0);
         m_grossberg_parameters.push_back(0.0);
     }
+    //响应模型RGB构造函数**********************************************************************need change
+    ResponseModel(int ch)
+    {   
+        for (int ch = 0; ch < 3; ++ch)
+        {
+            m_inverse_response_vector[ch].resize(256);
+            for (int i = 0; i < 256; ++i)
+            {
+                m_inverse_response_vector[ch][i] = static_cast<double>(i);
+            }
+
+            m_grossberg_parameters[ch].resize(4);
+            m_grossberg_parameters[ch][0] = 6.1;
+            m_grossberg_parameters[ch][1] = 0.0;
+            m_grossberg_parameters[ch][2] = 0.0;
+            m_grossberg_parameters[ch][3] = 0.0;
+        }
+    }
     
     /**
      * Apply inverse response function to output intensity 
@@ -52,6 +70,15 @@ public:
         return m_inverse_response_vector.at(o);
     }
     
+    // RGB三通道，从像素值还原成真实的辐射值
+    double removeResponseRGB(int o, int channel) const
+    {
+        if (channel < 0 || channel >= 3 || o < 0 || o > 255)
+            return 0.0;
+        return m_inverse_response_vector[channel].at(o); //查表
+    }
+
+
     /**
      * Overwrite Grossberg parameter vector
      */
@@ -72,6 +99,7 @@ public:
     /**
      * Overwrite inverse response function vector
      */
+    /*******************************************************here need change**********************************************************************/
     void setInverseResponseVector(double* new_inverse)
     {
         for(int i = 0;i < 256;i++)
@@ -94,6 +122,11 @@ private:
      * Grossberg parameter vector (4 values) representing the camera response
      */
     std::vector<double> m_grossberg_parameters;
+
+    //3通道RGB
+    // 每个通道一个逆响应曲线和参数向量
+    std::vector<double> m_inverse_response_vector[3];       // B, G, R
+    std::vector<double> m_grossberg_parameters[3];          // B, G, R
 
 };
 
